@@ -10,6 +10,13 @@
 
 // https://www.gnu.org/software/libc/manual/html_node/Simple-Directory-Lister.html
 
+#include <sys/stat.h>
+#include <unistd.h>
+
+//int stat(const char *file_name, struct stat *buf);
+//off_t value = buf->st_size;
+//int value = (int)buf->st_size;	dimensione totale in bytes
+
 int MAX;
 
 int check=0;
