@@ -1,33 +1,52 @@
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <errno.h>
 #include <string.h>
 
+#include <unistd.h>
+
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-
-#include <errno.h>
-#include <semaphore.h>
-#include <pthread.h>
-#include <dirent.h>
-
-// https://www.gnu.org/software/libc/manual/html_node/Simple-Directory-Lister.html
-
-__off_t MAX;
-
-int check=0;
-
-sem_t * semaforo;
-sem_t * semaforo_dir;
 
 
-//struct stat *statbuf;
+/*
+esercizio:
 
-void check_dir();
-void check_sub_dir();
+ottenere l'elenco dei file di una directory: fare riferimento a questo esempio:
+https://github.com/marcotessarotto/exOpSys/tree/master/023listFiles
+
+parte 1 - trova il file regolare più grande cercandolo all'interno di una directory
+
+parte 2 - trova il file regolare più grande cercandolo all'interno di una directory e
+ricorsivamente in tutte le sue sotto-directory
+
+scrivere la seguente funzione:
+
+char * find_largest_file(char * directory_name, int explore_subdirectories_recursively,
+int * largest_file_size);
+
+la funzione restituisce il percorso completo del file regolare più grande cercato nella
+directory specificata da directory_name.
+se explore_subdirectories_recursively != 0, allora cerca ricorsivamente in tutte le sue sotto-directory.
+(a parità di dimensioni, considera il primo trovato).
+
+la dimensione del file regolare più grande viene scritta nella variabile il cui indirizzo è dato da
+largest_file_size.
+se non ci sono file regolari, la funzione restituisce NULL (e largest_file_size non viene utilizzato).
+
+
+provare a fare girare il programma a partire da queste directory:
+
+/home/utente
+
+/
+ */
+
+#define MSG_REG
+
 
 // restituisce la dimensione del file, -1 in caso di errore
 __off_t get_file_size(char * file_name) {
@@ -45,194 +64,122 @@ __off_t get_file_size(char * file_name) {
 	return sb.st_size;
 }
 
-//statbuf = calloc(1, sizeof(stat));
-char * find_largest_file(char * directory_name, int explore_subdir, __off_t * largest_file_size){
 
-	char * name;
+char * find_largest_file(char * directory_name, int explore_subdirectories_recursively,
+		int * largest_file_size){
 
-	name = malloc(256);
-
-	if(explore_subdir == 0){
-
-		check =0;
-		check_dir(directory_name, name);
-	}
-
-	else{
-		check =0;
-
-		if (sem_wait(semaforo_dir) == -1) {
-				perror("sem_wait");
-				exit(EXIT_FAILURE);
-		}
-
-		check_dir(directory_name, name);
-
-		if (sem_post(semaforo_dir) == -1) {
-				perror("sem_post");
-				exit(EXIT_FAILURE);
-		}
-
-		check_sub_dir(directory_name, name);
-	}
-	return name;
-
-}
-
-void check_dir(char * directory_name, char * name){
+	char * file_name;
+	file_name = malloc(256);
 
 	DIR * dir_stream_ptr;
+	struct dirent *ep;
+
 	dir_stream_ptr = opendir(directory_name);
 
 	if (dir_stream_ptr == NULL) {
-		printf("[check_dir] impossibile accedere alla DIR %s!\n", directory_name);
-		//printf("%s", errno);
-		return;
-		//exit(EXIT_FAILURE);
+		*largest_file_size = -1;
+		return NULL;
 	}
-	//printf("accedo alla DIR %s!\n", directory_name);
-
-	struct dirent *ep;
+	int max=-1;
 
 	while ((ep = readdir(dir_stream_ptr)) != NULL) {
 
-			if(ep->d_type == DT_REG){
-				char pathname[256];
 
-				//strcpy(pathname, "/");
-				strcpy(pathname, directory_name);
-				strcat(pathname, "/");
-				strcat(pathname, ep->d_name);
+#ifdef MSG_REG
+		printf("%-10s ", (ep->d_type == DT_REG) ?  "regular" :
+		                                    (ep->d_type == DT_DIR) ?  "directory" :
+		                                    (ep->d_type == DT_FIFO) ? "FIFO" :
+		                                    (ep->d_type == DT_SOCK) ? "socket" :
+		                                    (ep->d_type == DT_LNK) ?  "symlink" :
+		                                    (ep->d_type == DT_BLK) ?  "block dev" :
+		                                    (ep->d_type == DT_CHR) ?  "char dev" : "???");
 
-				if(MAX < get_file_size(pathname)){//valuto lunghezza del file(devo però poterci accedere in lettura)
+		printf("%s", ep->d_name);
+#endif
 
-						if (sem_wait(semaforo) == -1) {
-								perror("sem_wait");
-								exit(EXIT_FAILURE);
-						}
 
-						MAX = get_file_size(pathname);
-						memcpy(name, pathname, 256);
-						check++; //valuto se ho potuto accedere ad almeno un file
-
-						if (sem_post(semaforo) == -1) {
-								perror("sem_post");
-								exit(EXIT_FAILURE);
-						}
-
-					}
-
-				}else{
-					//printf("impossibile accedere al FILE %s!\n", ep->d_name);
-				}
+		if (strcmp(".", ep->d_name)==0 || strcmp("..", ep->d_name)==0) {
+					printf("\n");
+					continue;//passo alla iterazione successiva
 		}
 
-	closedir(dir_stream_ptr);
-	}
 
-
-
-
-void check_sub_dir(char * directory_name, char * name){
-
-	DIR * dir_stream_ptr;
-	dir_stream_ptr = opendir(directory_name);
-
-	if (dir_stream_ptr == NULL) {
-		printf("[check_sub_dir] impossibile accedere alla DIR %s!\n", directory_name);
-		return;
-		//exit(EXIT_FAILURE);
-	}
-
-	struct dirent *ep;
-	//char dot[256] = "..";
-
-	while ((ep = readdir(dir_stream_ptr)) != NULL) {
-
-			if(ep->d_type == DT_DIR && *ep->d_name != '.' && ep->d_name[1] != '.'){
-
-				if (sem_wait(semaforo_dir) == -1) {
-						perror("sem_wait");
-						exit(EXIT_FAILURE);
-				}
-
-				strcat(directory_name, "/");
-				strcat(directory_name, ep->d_name);
-
-				printf("\n%s\n\n", directory_name);
-
-				check_dir(ep->d_name, name);
-
-				if (sem_post(semaforo_dir) == -1) {
-						perror("sem_post");
-						exit(EXIT_FAILURE);
-				}
-
-				check_sub_dir(ep->d_name, name);
-
-			}
-
-	}
-	closedir(dir_stream_ptr);
-}
-
-int main(int argc, char *argv[]) {
-
-	errno = 0;
-
-// man 3 opendir
-//    DIR *opendir(const char *name);
-//    DIR *fdopendir(int fd);
-	semaforo_dir = malloc(sizeof(sem_t));
-	sem_init(semaforo_dir, 1, 1);
-
-	semaforo = malloc(sizeof(sem_t));
-
-    sem_init(semaforo, 1, 1);
-
-	char * dirName;
-
-	dirName = malloc(256);
-
-	DIR * dir_stream_ptr;
-	dir_stream_ptr = opendir(getcwd(NULL,0));
-
-	if (dir_stream_ptr == NULL) {
-		printf("impossibile accedere alla CWD %s!\n", getcwd(NULL,0));
-		exit(EXIT_FAILURE);
-	}
-
-	struct dirent *ep;
-	check = 0;
-
-	while ((ep = readdir(dir_stream_ptr)) != NULL) {
-
+		//confronto file nella singola directory
 		if(ep->d_type == DT_REG){
-			check++;
+			__off_t size;
+			size = get_file_size(ep->d_name);
+
+#ifdef MSG_REG
+			printf("  size: %ld\n", size);
+#endif
+
+			if(max < size){
+					max = size;
+					strcpy(file_name, ep->d_name);
 			}
 		}
-	if(check != 0){
 
-		dirName	= find_largest_file(getcwd(NULL,0), 1, &MAX);
+		else if(explore_subdirectories_recursively !=0 && ep->d_type == DT_DIR){//subdirectory
 
-		//getcwd(NULL,0) con lo 0 adatta le dimensioni in base alla dimensione della stringa
+#ifdef MSG_REG
+			printf("\n");
+#endif
 
-		printf("\nNella cartella: %s\n", getcwd(NULL,0));
+			int sub_max=-1;
+			char * sub_file_name;
+			sub_file_name = malloc(256);
 
-		if(check>0){
+			//valuto il massimo sulla singola directory e poi libero la memoria allocata
 
-		printf("Il file più grande è %s e pesa : %ld bytes\n", dirName, MAX);
+			sub_file_name = find_largest_file(ep->d_name, explore_subdirectories_recursively, &sub_max);
+
+			if(max < sub_max){
+					max = sub_max;
+					strcpy(file_name, sub_file_name);
+			}
+			free(sub_file_name);
 		}
-		else{
-			printf("\nC'è stato un errore nell'accesso ai file, non è possibile valutare la dimensione\n");
-			printf("sarebbe %s e pesa : %ld bytes\n", dirName, MAX);
+	}
+
+	if (errno) {
+			perror("readdir() error");
 		}
 
-		return EXIT_SUCCESS;
+	closedir(dir_stream_ptr);
+
+	if(max == -1){
+		*largest_file_size = -1;
+		return NULL;
+	}else{
+
+	*largest_file_size = max;
+	return file_name;
 	}
-	else{
-		printf("\nNella cartella %s non ci sono file di cui poter valutare le dimensioni\n", getcwd(NULL,0));
-		return EXIT_FAILURE;
-	}
+
 }
 
+
+int main(int argc, char * argv[]) {
+
+	char * result;
+	int largest_file_size;
+
+	char * file_name;
+
+	if (argc == 1) {
+		file_name = getcwd(NULL,0);
+		printf("parametro: nome del file non inserito, procedo dalla cartella corrente : %s\n", file_name);
+	}else{
+		file_name = argv[1];
+	}
+
+	result = find_largest_file(file_name, 1, &largest_file_size);
+
+	printf("result = %s\n", result);
+	printf("size = %d\n", largest_file_size);
+
+//	printf("pid: %d\n", getpid());
+
+
+	return 0;
+}
